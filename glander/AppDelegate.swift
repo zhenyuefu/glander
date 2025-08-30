@@ -171,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prefs.$stocksDarkTheme
             .sink { [weak self] _ in self?.applyStocksPrefs() }
             .store(in: &cancellables)
+        prefs.$stocksWidgetStyle
+            .sink { [weak self] _ in self?.applyStocksPrefs() }
+            .store(in: &cancellables)
 
         // AI Camera
         prefs.$aiEnabled
@@ -211,6 +214,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let syms = prefs.stocksSymbols.split(separator: ",").map { String($0) }
         vc.symbols = syms
         vc.darkTheme = prefs.stocksDarkTheme
+        if let style = StocksWidgetStyle(rawValue: prefs.stocksWidgetStyle) {
+            vc.style = style
+        }
+        // If the stocks view is currently shown, refresh min size and clamp the frame
+        if windowController?.contentViewController === vc, let win = windowController?.window {
+            let min = vc.recommendedMinSize
+            win.contentMinSize = min
+            var frame = win.frame
+            if frame.size.width < min.width { frame.size.width = min.width }
+            if frame.size.height < min.height { frame.size.height = min.height }
+            win.setFrame(frame, display: true)
+        }
     }
 
     // MARK: - URL prompts
@@ -257,6 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         vc.symbols = syms
         vc.darkTheme = prefs.stocksDarkTheme
+        if let style = StocksWidgetStyle(rawValue: prefs.stocksWidgetStyle) {
+            vc.style = style
+        }
         setMainContent(vc, title: "Glander • 股票/基金")
     }
 
@@ -278,7 +296,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLocalVideoPrompt() {
         let panel = NSOpenPanel()
-        panel.allowedFileTypes = ["mp4", "mov", "m4v", "m3u8"]
+        // Use UTType-based filters to avoid deprecated API warnings
+        let exts = ["mp4", "mov", "m4v", "m3u8"]
+        panel.allowedContentTypes = exts.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             showVideo(url: url)
@@ -314,8 +334,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyWindowChrome(forWeb: true)
         // Apply window appearance preferences on first real content
         applyPreferencesToWindow()
-        // Preserve the current window size to avoid unwanted shrinking
-        win.setFrame(previousFrame, display: true)
+        // Clamp to a sensible minimum size per content to avoid content hidden below
+        var minSize = NSSize(width: 600, height: 320)
+        if let stocks = vc as? StocksWidgetController {
+            minSize = stocks.recommendedMinSize
+        }
+        win.contentMinSize = minSize
+        var target = previousFrame
+        if target.size.width < minSize.width { target.size.width = minSize.width }
+        if target.size.height < minSize.height { target.size.height = minSize.height }
+        // Preserve current size but ensure at least the minimum for the content
+        win.setFrame(target, display: true)
         windowController?.showWindow(self)
         ensureMainWindowVisible()
     }
