@@ -6,27 +6,17 @@
 //
 
 import SwiftUI
-import SwiftData
+import AppKit
 
 @main
 struct glanderApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // Use AppDelegate to manage all windows.
+        // Expose preferences via a native Settings scene for convenience.
+        Settings {
+            PreferencesView()
+                .frame(width: 440, height: 260)
         }
-        .modelContainer(sharedModelContainer)
     }
 }
