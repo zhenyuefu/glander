@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C78992722E630E6400F721B0 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C78992712E630E6400F721B0 /* Carbon.framework */; };
+		C78992742E630E8200F721B0 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C78992732E630E8200F721B0 /* WebKit.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		C78992472E63090F00F721B0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +32,8 @@
 		C78992362E63090E00F721B0 /* glander.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = glander.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C78992462E63090F00F721B0 /* glanderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = glanderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C78992502E63090F00F721B0 /* glanderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = glanderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C78992712E630E6400F721B0 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		C78992732E630E8200F721B0 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +59,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C78992742E630E8200F721B0 /* WebKit.framework in Frameworks */,
+				C78992722E630E6400F721B0 /* Carbon.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +87,7 @@
 				C78992382E63090E00F721B0 /* glander */,
 				C78992492E63090F00F721B0 /* glanderTests */,
 				C78992532E63090F00F721B0 /* glanderUITests */,
+				C78992702E630E6400F721B0 /* Frameworks */,
 				C78992372E63090E00F721B0 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +100,15 @@
 				C78992502E63090F00F721B0 /* glanderUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C78992702E630E6400F721B0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C78992732E630E8200F721B0 /* WebKit.framework */,
+				C78992712E630E6400F721B0 /* Carbon.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -393,6 +412,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = glander/glander.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -419,6 +439,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = glander/glander.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
