@@ -54,8 +54,13 @@ struct PreferencesView: View {
             }
 
             Section(header: Text("股票/基金")) {
-                TextField("符号列表 (逗号分隔)", text: $prefs.stocksSymbols, prompt: Text("AAPL, TSLA, 510300"))
+                TextField("符号列表 (逗号分隔)", text: $prefs.stocksSymbols, prompt: Text("NASDAQ:AAPL, NASDAQ:TSLA, 510300"))
                 Toggle("深色主题", isOn: $prefs.stocksDarkTheme)
+                Picker("样式", selection: $prefs.stocksWidgetStyle) {
+                    Text("跑马灯").tag("ticker")
+                    Text("概览").tag("overview")
+                    Text("单只").tag("single")
+                }
                 Text("使用 TradingView 嵌入，仅作展示用途")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

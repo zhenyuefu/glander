@@ -19,6 +19,7 @@ final class Preferences: ObservableObject {
     @Published var pdfAutoScrollSpeed: Double { didSet { save("pdfAutoScrollSpeed", pdfAutoScrollSpeed) } }
     @Published var stocksSymbols: String { didSet { save("stocksSymbols", stocksSymbols) } }
     @Published var stocksDarkTheme: Bool { didSet { save("stocksDarkTheme", stocksDarkTheme) } }
+    @Published var stocksWidgetStyle: String { didSet { save("stocksWidgetStyle", stocksWidgetStyle) } }
     @Published var aiEnabled: Bool { didSet { save("aiEnabled", aiEnabled) } }
     @Published var aiCooldownSec: Double { didSet { save("aiCooldownSec", aiCooldownSec) } }
     @Published var aiFPS: Double { didSet { save("aiFPS", aiFPS) } }
@@ -40,8 +41,9 @@ final class Preferences: ObservableObject {
         self.useEphemeralWebSession = defaults.object(forKey: "useEphemeralWebSession") as? Bool ?? false // default to persistent (keep login)
         self.pdfAutoScrollEnabled = defaults.object(forKey: "pdfAutoScrollEnabled") as? Bool ?? false
         self.pdfAutoScrollSpeed = defaults.object(forKey: "pdfAutoScrollSpeed") as? Double ?? 40.0
-        self.stocksSymbols = defaults.object(forKey: "stocksSymbols") as? String ?? "AAPL, TSLA, MSFT"
+        self.stocksSymbols = defaults.object(forKey: "stocksSymbols") as? String ?? "NASDAQ:AAPL, NASDAQ:TSLA, NASDAQ:MSFT"
         self.stocksDarkTheme = defaults.object(forKey: "stocksDarkTheme") as? Bool ?? true
+        self.stocksWidgetStyle = defaults.object(forKey: "stocksWidgetStyle") as? String ?? "ticker"
         self.aiEnabled = defaults.object(forKey: "aiEnabled") as? Bool ?? false
         self.aiCooldownSec = defaults.object(forKey: "aiCooldownSec") as? Double ?? 10.0
         self.aiFPS = defaults.object(forKey: "aiFPS") as? Double ?? 4.0
