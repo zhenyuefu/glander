@@ -75,9 +75,9 @@ final class StocksWidgetController: NSViewController, WKNavigationDelegate, WKSc
 
     func reload() {
         guard isViewLoaded else { return }
+        webView.stopLoading()
         let html = buildHTML(symbols: symbols, dark: darkTheme, style: style)
         let base = Bundle.main.resourceURL ?? Bundle.main.bundleURL
-        webView.stopLoading()
         webView.loadHTMLString(html, baseURL: base)
     }
 
