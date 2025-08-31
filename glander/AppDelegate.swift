@@ -569,8 +569,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startCameraMonitor() {
         if camera == nil {
             let cam = CameraMonitor()
-            cam.onRiskDetected = { [weak self] in self?.handleAIRisk() }
-            cam.onPermissionProblem = { [weak self] message in self?.showAlert(title: "摄像头不可用", message: message) }
+            cam.onRiskDetected = { [weak self] in
+                Task { @MainActor in self?.handleAIRisk() }
+            }
+            cam.onPermissionProblem = { [weak self] message in
+                Task { @MainActor in self?.showAlert(title: "摄像头不可用", message: message) }
+            }
             cam.minConsecutiveDetections = prefs.aiMinFrames
             cam.targetFPS = prefs.aiFPS
             camera = cam

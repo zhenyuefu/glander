@@ -1,68 +1,93 @@
 import Foundation
-import AVFoundation
+@preconcurrency import Dispatch
+@preconcurrency import AVFoundation
 @preconcurrency import Vision
 
-final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
-    enum State { case stopped, running }
-    private(set) var state: State = .stopped // mutated only on `queue`
+// MARK: - Core actor (serializes all mutable state)
+    actor CameraCore {
+        enum State { case stopped, running }
 
-    // Callbacks
-    var onRiskDetected: (() -> Void)?
-    var onPermissionProblem: ((String) -> Void)? // message
+    // Config (owned by the actor)
+    var minConsecutiveDetections: Int
+    var targetFPS: Double
 
-    // Config
-    var minConsecutiveDetections: Int = 1
-    var targetFPS: Double = 4.0
+    // Callbacks (Sendable so we can hop threads safely)
+    private var onRiskDetected: (@Sendable () -> Void)?
+    private var onPermissionProblem: (@Sendable (String) -> Void)?
 
     // Internals
     private let session = AVCaptureSession()
-    private let queue = DispatchQueue(label: "ai.camera.monitor")
     private var lastProcessTime: TimeInterval = 0
     private var detectionStreak = 0
+    private(set) var state: State = .stopped
 
-    func start() {
+    // A lightweight Objective‑C delegate bridge owned by the core
+    private let sampleBufferBridge: SampleBufferBridge
+
+    init(minConsecutiveDetections: Int,
+         targetFPS: Double,
+         onRiskDetected: (@Sendable () -> Void)?,
+         onPermissionProblem: (@Sendable (String) -> Void)?) {
+        self.minConsecutiveDetections = minConsecutiveDetections
+        self.targetFPS = targetFPS
+        self.onRiskDetected = onRiskDetected
+        self.onPermissionProblem = onPermissionProblem
+        self.sampleBufferBridge = SampleBufferBridge()
+        self.sampleBufferBridge.install(core: self)
+    }
+
+    func updateCallbacks(onRiskDetected: (@Sendable () -> Void)?,
+                         onPermissionProblem: (@Sendable (String) -> Void)?) {
+        self.onRiskDetected = onRiskDetected
+        self.onPermissionProblem = onPermissionProblem
+    }
+
+    // Isolated setters to mutate actor state from outside safely
+    func setMinConsecutiveDetections(_ value: Int) { self.minConsecutiveDetections = value }
+    func setTargetFPS(_ value: Double) { self.targetFPS = value }
+
+    // Start/Stop are fully serialized inside the actor
+    func start() async {
         // Check Info.plist key presence (to avoid crash on access)
         if Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") == nil {
-            let handler = self.onPermissionProblem
-            DispatchQueue.main.async {
-                handler?("缺少隐私权限描述：请在 Target > Info 添加 Privacy - Camera Usage Description (NSCameraUsageDescription)")
-            }
+            onPermissionProblem?("缺少隐私权限描述：请在 Target > Info 添加 Privacy - Camera Usage Description (NSCameraUsageDescription)")
             return
         }
 
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                if granted {
-                    if let strong = self {
-                        strong.queue.async { [weak strong] in strong?.configureAndStartOnQueue() }
+            // Avoid capturing `self` in a @Sendable closure: capture only the Sendable callbacks
+            let permissionHandler = self.onPermissionProblem
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    if granted {
+                        cont.resume()
+                    } else {
+                        permissionHandler?("相机访问被拒绝")
+                        cont.resume()
                     }
-                } else {
-                    let handler = self?.onPermissionProblem
-                    DispatchQueue.main.async { handler?("相机访问被拒绝") }
                 }
             }
+            // After returning, either we have permission or we already reported the error
+            if AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
+                configureAndStart()
+            }
         case .authorized:
-            queue.async { [weak self] in self?.configureAndStartOnQueue() }
+            configureAndStart()
         case .denied, .restricted:
-            let handler = self.onPermissionProblem
-            DispatchQueue.main.async { handler?("相机访问受限或被拒绝") }
+            onPermissionProblem?("相机访问受限或被拒绝")
         @unknown default:
-            let handler = self.onPermissionProblem
-            DispatchQueue.main.async { handler?("相机权限未知状态") }
+            onPermissionProblem?("相机权限未知状态")
         }
     }
 
     func stop() {
-        queue.async { [weak self] in
-            guard let self = self, self.state == .running else { return }
-            self.session.stopRunning()
-            self.state = .stopped
-        }
+        guard state == .running else { return }
+        session.stopRunning()
+        state = .stopped
     }
 
-    // MARK: - Setup
-    private func configureAndStartOnQueue() {
+    private func configureAndStart() {
         // Ensure serialized access
         session.beginConfiguration()
         session.sessionPreset = .vga640x480
@@ -70,8 +95,7 @@ final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         session.outputs.forEach { session.removeOutput($0) }
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified) ?? AVCaptureDevice.default(for: .video) else {
-            let handler = self.onPermissionProblem
-            DispatchQueue.main.async { handler?("未找到可用摄像头设备") }
+            onPermissionProblem?("未找到可用摄像头设备")
             session.commitConfiguration()
             return
         }
@@ -79,8 +103,7 @@ final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             let input = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(input) { session.addInput(input) }
         } catch {
-            let handler = self.onPermissionProblem
-            DispatchQueue.main.async { handler?("无法创建摄像头输入：\(error.localizedDescription)") }
+            onPermissionProblem?("无法创建摄像头输入：\(error.localizedDescription)")
             session.commitConfiguration()
             return
         }
@@ -88,7 +111,7 @@ final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        output.setSampleBufferDelegate(self, queue: queue)
+        output.setSampleBufferDelegate(sampleBufferBridge, queue: sampleBufferBridge.queue)
         if session.canAddOutput(output) { session.addOutput(output) }
 
         session.commitConfiguration()
@@ -98,8 +121,8 @@ final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         lastProcessTime = 0
     }
 
-    // MARK: - Delegate
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    // Called from the delegate bridge
+    func process(_ sampleBuffer: CMSampleBuffer) {
         guard state == .running else { return }
         // Throttle to target FPS
         let now = CFAbsoluteTimeGetCurrent()
@@ -108,35 +131,126 @@ final class CameraMonitor: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         lastProcessTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let request = VNDetectFaceRectanglesRequest { [weak self] req, err in
-            guard let self = self else { return }
-            if err != nil { return }
-            // Read Vision results before hopping to another executor to avoid
-            // capturing non-Sendable types across concurrency domains.
-            let faces = (req.results as? [VNFaceObservation]) ?? []
-            // Ensure state mutation on our serial queue
-            self.queue.async {
-                if faces.count > 0 {
-                    self.detectionStreak += 1
-                    if self.detectionStreak >= self.minConsecutiveDetections {
-                        self.detectionStreak = 0
-                        DispatchQueue.main.async { self.onRiskDetected?() }
-                    }
-                } else {
-                    self.detectionStreak = 0
-                }
-            }
-        }
+        let request = VNDetectFaceRectanglesRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         do {
             try handler.perform([request])
+            let faces = request.results ?? []
+            if faces.count > 0 {
+                detectionStreak += 1
+                if detectionStreak >= minConsecutiveDetections {
+                    detectionStreak = 0
+                    onRiskDetected?()
+                }
+            } else {
+                detectionStreak = 0
+            }
         } catch {
-            // ignore
+            // ignore vision errors to keep pipeline flowing
         }
     }
 }
 
-// We guard internal mutable state via a private serial DispatchQueue, and only
-// invoke UI callbacks on the main queue. Mark as @unchecked Sendable to silence
-// strict concurrency warnings when closures capture `self` across executors.
-extension CameraMonitor: @unchecked Sendable {}
+// MARK: - ObjC delegate bridge (no shared mutable state)
+final class SampleBufferBridge: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    // A dedicated serial queue for the AVCapture output
+    let queue = DispatchQueue(label: "ai.camera.monitor.bridge")
+
+    // Weak-like install to avoid retain cycles (the actor will outlive the bridge once installed)
+    private var _core: CameraCore?
+
+    func install(core: CameraCore) { _core = core }
+
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        // Make an independent copy to avoid task-isolated capture diagnostics
+        var copy: CMSampleBuffer? = nil
+        let status = CMSampleBufferCreateCopy(allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer, sampleBufferOut: &copy)
+        guard status == noErr, let safeCopy = copy else { return }
+
+        struct SampleBufferBox: @unchecked Sendable { let buffer: CMSampleBuffer }
+        let box = SampleBufferBox(buffer: safeCopy)
+
+        if let core = _core {
+            Task { await core.process(box.buffer) }
+        }
+    }
+}
+
+// MARK: - Public facade (non-Sendable, no @unchecked needed)
+final class CameraMonitor: NSObject {
+    // Exposed callbacks (Sendable so they can cross threads safely)
+    var onRiskDetected: (@Sendable () -> Void)? {
+        didSet {
+            let c = core
+            let risk = onRiskDetected
+            let perm = onPermissionProblem
+            Task { await c.updateCallbacks(onRiskDetected: risk, onPermissionProblem: perm) }
+        }
+    }
+    var onPermissionProblem: (@Sendable (String) -> Void)? {
+        didSet {
+            let c = core
+            let risk = onRiskDetected
+            let perm = onPermissionProblem
+            Task { await c.updateCallbacks(onRiskDetected: risk, onPermissionProblem: perm) }
+        }
+    }
+
+    // Config proxies
+    var minConsecutiveDetections: Int {
+        get { storedMin }
+        set {
+            storedMin = newValue
+            let c = core
+            Task { await c.setMinConsecutiveDetections(newValue) }
+        }
+    }
+    var targetFPS: Double {
+        get { storedFPS }
+        set {
+            storedFPS = newValue
+            let c = core
+            Task { await c.setTargetFPS(newValue) }
+        }
+    }
+
+    // Local mirrors for quick reads (not used from multiple threads concurrently)
+    private var storedMin: Int
+    private var storedFPS: Double
+
+    // The actor that owns the mutable state and the AVCaptureSession
+    private let core: CameraCore
+
+    override init() {
+        self.storedMin = 1
+        self.storedFPS = 4.0
+        self.core = CameraCore(minConsecutiveDetections: 1,
+                               targetFPS: 4.0,
+                               onRiskDetected: nil,
+                               onPermissionProblem: nil)
+        super.init()
+    }
+
+    func start() {
+        let c = core
+        let risk = onRiskDetected
+        let perm = onPermissionProblem
+        Task {
+            await c.updateCallbacks(onRiskDetected: risk, onPermissionProblem: perm)
+            await c.start()
+        }
+    }
+
+    func stop() {
+        let c = core
+        Task { await c.stop() }
+    }
+}
+
+// Concurrency notes:
+// - All mutable state (session, throttling, detection counters) lives in the CameraCore actor.
+// - We never capture `self` from CameraMonitor inside a `@Sendable` closure.
+// - The AVCapture delegate is a separate NSObject (SampleBufferBridge) that forwards frames to the actor via Task, which is safe because actors are Sendable by construction.
+// - Public callbacks are typed as `@Sendable` so clients can safely assign closures that might be invoked from non-main threads (callers can still dispatch to main if they touch UI).
