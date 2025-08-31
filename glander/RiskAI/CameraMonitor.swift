@@ -3,13 +3,16 @@ import Foundation
 @preconcurrency import AVFoundation
 @preconcurrency import Vision
 
-// MARK: - Core actor (serializes all mutable state)
+    // MARK: - Core actor (serializes all mutable state)
     actor CameraCore {
         enum State { case stopped, running }
+        enum DetectionMode: String, Sendable { case face, human }
 
     // Config (owned by the actor)
     var minConsecutiveDetections: Int
     var targetFPS: Double
+    var minPersons: Int
+    var detectMode: DetectionMode
 
     // Callbacks (Sendable so we can hop threads safely)
     private var onRiskDetected: (@Sendable () -> Void)?
@@ -26,10 +29,14 @@ import Foundation
 
     init(minConsecutiveDetections: Int,
          targetFPS: Double,
+         minPersons: Int,
+         detectMode: DetectionMode,
          onRiskDetected: (@Sendable () -> Void)?,
          onPermissionProblem: (@Sendable (String) -> Void)?) {
         self.minConsecutiveDetections = minConsecutiveDetections
         self.targetFPS = targetFPS
+        self.minPersons = max(1, minPersons)
+        self.detectMode = detectMode
         self.onRiskDetected = onRiskDetected
         self.onPermissionProblem = onPermissionProblem
         self.sampleBufferBridge = SampleBufferBridge()
@@ -45,6 +52,8 @@ import Foundation
     // Isolated setters to mutate actor state from outside safely
     func setMinConsecutiveDetections(_ value: Int) { self.minConsecutiveDetections = value }
     func setTargetFPS(_ value: Double) { self.targetFPS = value }
+    func setMinPersons(_ value: Int) { self.minPersons = max(1, value) }
+    func setDetectMode(_ value: DetectionMode) { self.detectMode = value }
 
     // Start/Stop are fully serialized inside the actor
     func start() async {
@@ -131,12 +140,19 @@ import Foundation
         lastProcessTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let request = VNDetectFaceRectanglesRequest()
+        let request: VNRequest
+        switch detectMode {
+        case .face:
+            request = VNDetectFaceRectanglesRequest()
+        case .human:
+            request = VNDetectHumanRectanglesRequest()
+        }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         do {
             try handler.perform([request])
-            let faces = request.results ?? []
-            if faces.count > 0 {
+            let objects = request.results ?? []
+            // Trigger when objects (faces or humans) reach threshold
+            if objects.count >= max(1, minPersons) {
                 detectionStreak += 1
                 if detectionStreak >= minConsecutiveDetections {
                     detectionStreak = 0
@@ -215,10 +231,30 @@ final class CameraMonitor: NSObject {
             Task { await c.setTargetFPS(newValue) }
         }
     }
+    var minPersons: Int {
+        get { storedMinPersons }
+        set {
+            storedMinPersons = newValue
+            let c = core
+            Task { await c.setMinPersons(newValue) }
+        }
+    }
+    enum DetectionMode: String { case face, human }
+    var detectMode: DetectionMode {
+        get { storedDetectMode }
+        set {
+            storedDetectMode = newValue
+            let c = core
+            let mapped: CameraCore.DetectionMode = (newValue == .face) ? .face : .human
+            Task { await c.setDetectMode(mapped) }
+        }
+    }
 
     // Local mirrors for quick reads (not used from multiple threads concurrently)
     private var storedMin: Int
     private var storedFPS: Double
+    private var storedMinPersons: Int
+    private var storedDetectMode: DetectionMode
 
     // The actor that owns the mutable state and the AVCaptureSession
     private let core: CameraCore
@@ -226,8 +262,12 @@ final class CameraMonitor: NSObject {
     override init() {
         self.storedMin = 1
         self.storedFPS = 4.0
+        self.storedMinPersons = 2
+        self.storedDetectMode = .face
         self.core = CameraCore(minConsecutiveDetections: 1,
                                targetFPS: 4.0,
+                               minPersons: 2,
+                               detectMode: .face,
                                onRiskDetected: nil,
                                onPermissionProblem: nil)
         super.init()

@@ -11,8 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var videoVC: VideoPlayerController?
     private var stocksVC: StocksWidgetController?
     private var camera: CameraMonitor?
-    private var aiCoolingDown = false
-    private var aiCooldownWork: DispatchWorkItem?
     private var pendingStocksApply: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private let bossKey = BossKeyManager()
@@ -211,6 +209,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         prefs.$aiMinFrames
             .sink { [weak self] n in self?.camera?.minConsecutiveDetections = n }
+            .store(in: &cancellables)
+        prefs.$aiMinPersons
+            .sink { [weak self] n in self?.camera?.minPersons = max(1, n) }
+            .store(in: &cancellables)
+        prefs.$aiDetectMode
+            .sink { [weak self] mode in self?.camera?.detectMode = (mode == "human") ? .human : .face }
             .store(in: &cancellables)
 
         // Novel hotkey changes → re-register
@@ -577,10 +581,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             cam.minConsecutiveDetections = prefs.aiMinFrames
             cam.targetFPS = prefs.aiFPS
+            cam.minPersons = max(1, prefs.aiMinPersons)
+            cam.detectMode = (prefs.aiDetectMode == "human") ? .human : .face
             camera = cam
         }
         camera?.minConsecutiveDetections = prefs.aiMinFrames
         camera?.targetFPS = prefs.aiFPS
+        camera?.minPersons = max(1, prefs.aiMinPersons)
+        camera?.detectMode = (prefs.aiDetectMode == "human") ? .human : .face
         camera?.start()
     }
 
@@ -589,20 +597,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleAIRisk() {
-        if aiCoolingDown { return }
-        aiCoolingDown = true
-        // Action: hide all glander window(s)
+        // Hide glander windows immediately; keep monitoring without cooldown
         if let win = windowController?.window, win.isVisible { win.orderOut(nil) }
-        // Cooldown: stop camera and restart after interval
-        camera?.stop()
-        aiCooldownWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.aiCoolingDown = false
-            if self.prefs.aiEnabled { self.camera?.start() }
-        }
-        aiCooldownWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + prefs.aiCooldownSec, execute: work)
     }
 
     private func showAlert(title: String, message: String) {
