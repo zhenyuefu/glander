@@ -33,9 +33,10 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(p.pdfAutoScrollSpeed, 40.0, accuracy: 0.01)
         XCTAssertEqual(p.stocksWidgetStyle, "ticker")
         XCTAssertEqual(p.aiEnabled, false)
-        XCTAssertEqual(p.aiCooldownSec, 10.0, accuracy: 0.01)
         XCTAssertEqual(p.aiFPS, 4.0, accuracy: 0.01)
         XCTAssertEqual(p.aiMinFrames, 2)
+        XCTAssertEqual(p.aiMinPersons, 2)
+        XCTAssertEqual(p.aiDetectMode, "face")
     }
 
     func testPersistence() {
@@ -52,9 +53,10 @@ final class PreferencesTests: XCTestCase {
         p.stocksDarkTheme = false
         p.stocksWidgetStyle = "grid"
         p.aiEnabled = true
-        p.aiCooldownSec = 8
         p.aiFPS = 3
         p.aiMinFrames = 3
+        p.aiMinPersons = 4
+        p.aiDetectMode = "human"
 
         // Recreate to verify persisted values
         let p2 = Preferences(defaults: defaults)
@@ -70,8 +72,9 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(p2.stocksDarkTheme, false)
         XCTAssertEqual(p2.stocksWidgetStyle, "grid")
         XCTAssertEqual(p2.aiEnabled, true)
-        XCTAssertEqual(p2.aiCooldownSec, 8, accuracy: 0.01)
         XCTAssertEqual(p2.aiFPS, 3, accuracy: 0.01)
         XCTAssertEqual(p2.aiMinFrames, 3)
+        XCTAssertEqual(p2.aiMinPersons, 4)
+        XCTAssertEqual(p2.aiDetectMode, "human")
     }
 }

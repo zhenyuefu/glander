@@ -80,9 +80,23 @@ struct PreferencesView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 HStack {
+                    Text("检测类型")
+                    Picker("检测类型", selection: $prefs.aiDetectMode) {
+                        Text("人脸").tag("face")
+                        Text("人体").tag("human")
+                    }
+                    .pickerStyle(.segmented)
+                }
+                HStack {
                     Text("灵敏度")
                     Stepper(value: $prefs.aiMinFrames, in: 1...5) {
                         Text("连续 \(prefs.aiMinFrames) 帧")
+                    }
+                }
+                HStack {
+                    Text("人数阈值")
+                    Stepper(value: $prefs.aiMinPersons, in: 1...5) {
+                        Text("至少 \(prefs.aiMinPersons) 人")
                     }
                 }
                 HStack {
@@ -90,11 +104,7 @@ struct PreferencesView: View {
                     Slider(value: $prefs.aiFPS, in: 1...10, step: 1)
                     Text(String(format: "%.0f fps", prefs.aiFPS)).frame(width: 60, alignment: .trailing)
                 }
-                HStack {
-                    Text("冷却")
-                    Slider(value: $prefs.aiCooldownSec, in: 3...30, step: 1)
-                    Text(String(format: "%.0f s", prefs.aiCooldownSec)).frame(width: 60, alignment: .trailing)
-                }
+                // Removed cooldown: camera keeps monitoring continuously
                 Text("注意：启用时摄像头指示灯会亮，需在 Target 的 Info 配置相机用途描述。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

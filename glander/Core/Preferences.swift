@@ -21,9 +21,11 @@ final class Preferences: ObservableObject {
     @Published var stocksDarkTheme: Bool { didSet { save("stocksDarkTheme", stocksDarkTheme) } }
     @Published var stocksWidgetStyle: String { didSet { save("stocksWidgetStyle", stocksWidgetStyle) } }
     @Published var aiEnabled: Bool { didSet { save("aiEnabled", aiEnabled) } }
-    @Published var aiCooldownSec: Double { didSet { save("aiCooldownSec", aiCooldownSec) } }
     @Published var aiFPS: Double { didSet { save("aiFPS", aiFPS) } }
     @Published var aiMinFrames: Int { didSet { save("aiMinFrames", aiMinFrames) } }
+    @Published var aiMinPersons: Int { didSet { save("aiMinPersons", aiMinPersons) } }
+    // "face" or "human"
+    @Published var aiDetectMode: String { didSet { save("aiDetectMode", aiDetectMode) } }
 
     // Novel reading progress
     @Published var novelLastOffset: Int { didSet { save("novelLastOffset", novelLastOffset) } }
@@ -60,9 +62,10 @@ final class Preferences: ObservableObject {
         self.stocksDarkTheme = defaults.object(forKey: "stocksDarkTheme") as? Bool ?? true
         self.stocksWidgetStyle = defaults.object(forKey: "stocksWidgetStyle") as? String ?? "ticker"
         self.aiEnabled = defaults.object(forKey: "aiEnabled") as? Bool ?? false
-        self.aiCooldownSec = defaults.object(forKey: "aiCooldownSec") as? Double ?? 10.0
         self.aiFPS = defaults.object(forKey: "aiFPS") as? Double ?? 4.0
         self.aiMinFrames = defaults.object(forKey: "aiMinFrames") as? Int ?? 2
+        self.aiMinPersons = defaults.object(forKey: "aiMinPersons") as? Int ?? 2
+        self.aiDetectMode = defaults.object(forKey: "aiDetectMode") as? String ?? "face"
         self.novelLastOffset = defaults.object(forKey: "novelLastOffset") as? Int ?? 0
         self.novelOffsets = defaults.object(forKey: "novelOffsets") as? [String: Int] ?? [:]
         self.novelLastFileBookmark = defaults.object(forKey: "novelLastFileBookmark") as? Data

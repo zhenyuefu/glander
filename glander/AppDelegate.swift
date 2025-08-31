@@ -11,8 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var videoVC: VideoPlayerController?
     private var stocksVC: StocksWidgetController?
     private var camera: CameraMonitor?
-    private var aiCoolingDown = false
-    private var aiCooldownWork: DispatchWorkItem?
+    private var isCameraActive = false
     private var pendingStocksApply: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private let bossKey = BossKeyManager()
@@ -123,9 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let win = windowController?.window, win.contentViewController != nil else { return }
         if win.isVisible {
             win.orderOut(nil)
+            updateCameraRunStateBasedOnWindow()
         } else {
             windowController?.showWindow(self)
             ensureMainWindowVisible()
+            updateCameraRunStateBasedOnWindow()
         }
     }
 
@@ -201,16 +202,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // AI Camera
         prefs.$aiEnabled
-            .sink { [weak self] enabled in
-                guard let self else { return }
-                if enabled { self.startCameraMonitor() } else { self.stopCameraMonitor() }
-            }
+            .sink { [weak self] _ in self?.updateCameraRunStateBasedOnWindow() }
             .store(in: &cancellables)
         prefs.$aiFPS
             .sink { [weak self] fps in self?.camera?.targetFPS = fps }
             .store(in: &cancellables)
         prefs.$aiMinFrames
             .sink { [weak self] n in self?.camera?.minConsecutiveDetections = n }
+            .store(in: &cancellables)
+        prefs.$aiMinPersons
+            .sink { [weak self] n in self?.camera?.minPersons = max(1, n) }
+            .store(in: &cancellables)
+        prefs.$aiDetectMode
+            .sink { [weak self] mode in self?.camera?.detectMode = (mode == "human") ? .human : .face }
             .store(in: &cancellables)
 
         // Novel hotkey changes → re-register
@@ -512,6 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.setFrame(target, display: true)
         windowController?.showWindow(self)
         ensureMainWindowVisible()
+        updateCameraRunStateBasedOnWindow()
     }
 
     /// Adjust window chrome: always no title bar, no close/minimize/zoom buttons.
@@ -538,6 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Bring to front and focus app
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // do not call update here to avoid redundant work; caller will handle
     }
 
     // Camouflage functions removed
@@ -569,36 +575,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startCameraMonitor() {
         if camera == nil {
             let cam = CameraMonitor()
-            cam.onRiskDetected = { [weak self] in self?.handleAIRisk() }
-            cam.onPermissionProblem = { [weak self] message in self?.showAlert(title: "摄像头不可用", message: message) }
+            cam.onRiskDetected = { [weak self] in
+                Task { @MainActor in self?.handleAIRisk() }
+            }
+            cam.onPermissionProblem = { [weak self] message in
+                Task { @MainActor in self?.showAlert(title: "摄像头不可用", message: message) }
+            }
             cam.minConsecutiveDetections = prefs.aiMinFrames
             cam.targetFPS = prefs.aiFPS
+            cam.minPersons = max(1, prefs.aiMinPersons)
+            cam.detectMode = (prefs.aiDetectMode == "human") ? .human : .face
             camera = cam
         }
         camera?.minConsecutiveDetections = prefs.aiMinFrames
         camera?.targetFPS = prefs.aiFPS
-        camera?.start()
+        camera?.minPersons = max(1, prefs.aiMinPersons)
+        camera?.detectMode = (prefs.aiDetectMode == "human") ? .human : .face
+        if !isCameraActive {
+            camera?.start()
+            isCameraActive = true
+        }
     }
 
     private func stopCameraMonitor() {
-        camera?.stop()
+        if isCameraActive {
+            camera?.stop()
+            isCameraActive = false
+        }
     }
 
     private func handleAIRisk() {
-        if aiCoolingDown { return }
-        aiCoolingDown = true
-        // Action: hide all glander window(s)
-        if let win = windowController?.window, win.isVisible { win.orderOut(nil) }
-        // Cooldown: stop camera and restart after interval
-        camera?.stop()
-        aiCooldownWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.aiCoolingDown = false
-            if self.prefs.aiEnabled { self.camera?.start() }
+        // Hide glander windows and stop camera detection when hidden
+        if let win = windowController?.window, win.isVisible {
+            win.orderOut(nil)
+            stopCameraMonitor()
         }
-        aiCooldownWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + prefs.aiCooldownSec, execute: work)
+    }
+
+    private func updateCameraRunStateBasedOnWindow() {
+        let shouldRun = prefs.aiEnabled && (windowController?.window?.isVisible ?? false)
+        if shouldRun {
+            startCameraMonitor()
+        } else {
+            stopCameraMonitor()
+        }
     }
 
     private func showAlert(title: String, message: String) {
