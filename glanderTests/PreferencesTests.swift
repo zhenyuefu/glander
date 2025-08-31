@@ -28,9 +28,14 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(p.bossKeyEnabled, true)
         XCTAssertEqual(p.marqueeEnabled, false)
         XCTAssertEqual(p.marqueeText.isEmpty, false)
-        XCTAssertEqual(p.forceTransparentCSS, true)
+        XCTAssertEqual(p.forceTransparentCSS, false)
         XCTAssertEqual(p.pdfAutoScrollEnabled, false)
         XCTAssertEqual(p.pdfAutoScrollSpeed, 40.0, accuracy: 0.01)
+        XCTAssertEqual(p.stocksWidgetStyle, "ticker")
+        XCTAssertEqual(p.aiEnabled, false)
+        XCTAssertEqual(p.aiCooldownSec, 10.0, accuracy: 0.01)
+        XCTAssertEqual(p.aiFPS, 4.0, accuracy: 0.01)
+        XCTAssertEqual(p.aiMinFrames, 2)
     }
 
     func testPersistence() {
@@ -45,11 +50,8 @@ final class PreferencesTests: XCTestCase {
         p.pdfAutoScrollSpeed = 66.0
         p.stocksSymbols = "AAPL, 510300"
         p.stocksDarkTheme = false
-        p.bossKeyAction = 1
-        p.camouflageStyle = "code"
-        p.camouflageTitle = "Foo.swift"
+        p.stocksWidgetStyle = "grid"
         p.aiEnabled = true
-        p.aiAction = 1
         p.aiCooldownSec = 8
         p.aiFPS = 3
         p.aiMinFrames = 3
@@ -66,14 +68,10 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(p2.pdfAutoScrollSpeed, 66.0, accuracy: 0.01)
         XCTAssertEqual(p2.stocksSymbols, "AAPL, 510300")
         XCTAssertEqual(p2.stocksDarkTheme, false)
-        XCTAssertEqual(p2.bossKeyAction, 1)
-        XCTAssertEqual(p2.camouflageStyle, "code")
-        XCTAssertEqual(p2.camouflageTitle, "Foo.swift")
+        XCTAssertEqual(p2.stocksWidgetStyle, "grid")
         XCTAssertEqual(p2.aiEnabled, true)
-        XCTAssertEqual(p2.aiAction, 1)
         XCTAssertEqual(p2.aiCooldownSec, 8, accuracy: 0.01)
         XCTAssertEqual(p2.aiFPS, 3, accuracy: 0.01)
         XCTAssertEqual(p2.aiMinFrames, 3)
     }
 }
-
