@@ -12,6 +12,7 @@ struct TransparentWindowConfig {
     }
 }
 
+@MainActor
 final class TransparentWindowController: NSWindowController {
     init(config: TransparentWindowConfig) {
         let style: NSWindow.StyleMask = [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable]

@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 final class Preferences: ObservableObject {
-    static let shared = Preferences()
+    @MainActor static let shared = Preferences()
 
     @Published var windowAlpha: Double { didSet { save("windowAlpha", windowAlpha) } }
     @Published var clickThrough: Bool { didSet { save("clickThrough", clickThrough) } }
@@ -24,6 +24,21 @@ final class Preferences: ObservableObject {
     @Published var aiCooldownSec: Double { didSet { save("aiCooldownSec", aiCooldownSec) } }
     @Published var aiFPS: Double { didSet { save("aiFPS", aiFPS) } }
     @Published var aiMinFrames: Int { didSet { save("aiMinFrames", aiMinFrames) } }
+
+    // Novel reading progress
+    @Published var novelLastOffset: Int { didSet { save("novelLastOffset", novelLastOffset) } }
+    @Published var novelOffsets: [String: Int] { didSet { save("novelOffsets", novelOffsets) } }
+    // Security-scoped bookmark for last opened TXT file
+    @Published var novelLastFileBookmark: Data? { didSet {
+        if let data = novelLastFileBookmark { defaults.set(data, forKey: "novelLastFileBookmark") } else { defaults.removeObject(forKey: "novelLastFileBookmark") }
+    } }
+    // Custom regex for chapter detection (one per line). Empty = use defaults only.
+    @Published var novelTOCRegex: String { didSet { save("novelTOCRegex", novelTOCRegex) } }
+    // Novel paging hotkeys (keyCode + modifiers). 0 means use default.
+    @Published var novelPrevKeyCode: UInt32 { didSet { save("novelPrevKeyCode", Int(novelPrevKeyCode)) } }
+    @Published var novelPrevModifiers: UInt32 { didSet { save("novelPrevModifiers", Int(novelPrevModifiers)) } }
+    @Published var novelNextKeyCode: UInt32 { didSet { save("novelNextKeyCode", Int(novelNextKeyCode)) } }
+    @Published var novelNextModifiers: UInt32 { didSet { save("novelNextModifiers", Int(novelNextModifiers)) } }
 
     private let defaults: UserDefaults
 
@@ -48,6 +63,15 @@ final class Preferences: ObservableObject {
         self.aiCooldownSec = defaults.object(forKey: "aiCooldownSec") as? Double ?? 10.0
         self.aiFPS = defaults.object(forKey: "aiFPS") as? Double ?? 4.0
         self.aiMinFrames = defaults.object(forKey: "aiMinFrames") as? Int ?? 2
+        self.novelLastOffset = defaults.object(forKey: "novelLastOffset") as? Int ?? 0
+        self.novelOffsets = defaults.object(forKey: "novelOffsets") as? [String: Int] ?? [:]
+        self.novelLastFileBookmark = defaults.object(forKey: "novelLastFileBookmark") as? Data
+        self.novelTOCRegex = defaults.object(forKey: "novelTOCRegex") as? String ?? ""
+        // Defaults: 0 → will fallback to Option+Arrow in registration
+        self.novelPrevKeyCode = UInt32(defaults.object(forKey: "novelPrevKeyCode") as? Int ?? 0)
+        self.novelPrevModifiers = UInt32(defaults.object(forKey: "novelPrevModifiers") as? Int ?? 0)
+        self.novelNextKeyCode = UInt32(defaults.object(forKey: "novelNextKeyCode") as? Int ?? 0)
+        self.novelNextModifiers = UInt32(defaults.object(forKey: "novelNextModifiers") as? Int ?? 0)
     }
 
     private func save(_ key: String, _ value: Any) {

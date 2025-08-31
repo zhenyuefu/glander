@@ -1,14 +1,14 @@
 import AppKit
 
 #if canImport(Carbon)
-import Carbon
+@preconcurrency import Carbon
 
-final class BossKeyManager {
+@MainActor final class BossKeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private var callback: (() -> Void)?
 
-    deinit { unregister() }
+    // No deinit cleanup; explicit callers handle unregister on app shutdown.
 
     enum KeyCode: UInt32 { case h = 4 /* kVK_ANSI_H */; case space = 49 }
 
@@ -24,12 +24,28 @@ final class BossKeyManager {
     func register(keyCode: KeyCode, modifiers: Modifiers, _ action: @escaping () -> Void) {
         unregister()
         callback = action
-        var hotKeyID = EventHotKeyID(signature: OSType(0x474C4E44 as UInt32), id: UInt32(1)) // 'GLND'
+        // Use a distinct signature for boss key to avoid handler clashes
+        let hotKeyID = EventHotKeyID(signature: OSType(0x424F5353 as UInt32), id: UInt32(1)) // 'BOSS'
         let status = RegisterEventHotKey(keyCode.rawValue, modifiers.rawValue, hotKeyID, GetEventDispatcherTarget(), 0, &hotKeyRef)
-        guard status == noErr, hotKeyRef != nil else { return }
+        guard status == noErr, hotKeyRef != nil else {
+            #if DEBUG
+            print("[BossKey] RegisterEventHotKey failed: status=\(status)")
+            #endif
+            return
+        }
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let handler: EventHandlerUPP = { (_, _, userData) -> OSStatus in
-            let mgr = Unmanaged<BossKeyManager>.fromOpaque(userData!).takeUnretainedValue()
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let userData else { return noErr }
+            let mgr = Unmanaged<BossKeyManager>.fromOpaque(userData).takeUnretainedValue()
+            var hkID = EventHotKeyID()
+            let size = MemoryLayout<EventHotKeyID>.size
+            let err = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, size, nil, &hkID)
+            guard err == noErr else { return OSStatus(eventNotHandledErr) }
+            // Only respond to our 'BOSS' signature
+            let bossSig: OSType = OSType(0x424F5353 as UInt32)
+            guard hkID.signature == bossSig else { return OSStatus(eventNotHandledErr) }
+            // Invoke directly on main runloop
+            assert(Thread.isMainThread)
             mgr.callback?()
             return noErr
         }
@@ -44,10 +60,12 @@ final class BossKeyManager {
         eventHandler = nil
         callback = nil
     }
+
+    // No additional teardown method needed; deinit is isolated.
 }
 #else
 // 安全降级：若 Carbon 不可用，提供空实现确保可编译
-final class BossKeyManager {
+@MainActor final class BossKeyManager {
     enum KeyCode: UInt32 { case h = 4; case space = 49 }
     struct Modifiers: OptionSet { let rawValue: UInt32; init(rawValue: UInt32){ self.rawValue = rawValue }
         static let command = Modifiers(rawValue: 1<<0)
@@ -58,5 +76,6 @@ final class BossKeyManager {
     func register(keyCode: KeyCode, modifiers: Modifiers, _ action: @escaping () -> Void) {
         // no-op; 需要时在 Xcode 中链接 Carbon.framework 以启用
     }
+    func unregister() {}
 }
 #endif

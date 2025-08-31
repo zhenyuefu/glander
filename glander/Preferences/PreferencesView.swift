@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 struct PreferencesView: View {
     @ObservedObject var prefs = Preferences.shared
+    // Hotkey capture handled in NovelHotkeyRecorder
 
     var body: some View {
         Form {
@@ -24,14 +26,18 @@ struct PreferencesView: View {
             }
 
             Section(header: Text("菜单栏小说")) {
-                Toggle("启用跑马灯", isOn: $prefs.marqueeEnabled)
-                HStack {
-                    Text("速度")
-                    Slider(value: $prefs.marqueeSpeed, in: 2...14, step: 1)
-                    Text(String(format: "%.0f字/秒", prefs.marqueeSpeed))
-                        .frame(width: 90, alignment: .trailing)
-                }
-                TextField("文本", text: $prefs.marqueeText, prompt: Text("请输入要滚动的小说片段"))
+                Text("使用状态栏菜单加载 TXT 小说，并通过自定义全局快捷键翻页。默认：⌥←/⌥→。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("自定义章节匹配正则（每行一条，可用 (?i) 忽略大小写）：")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $prefs.novelTOCRegex)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 60)
+
+                Divider()
+                NovelHotkeyRecorder()
             }
 
             Section(header: Text("网页适配")) {
@@ -96,9 +102,123 @@ struct PreferencesView: View {
         }
         .padding()
         .frame(width: 420)
+        // No local capture here; see NovelHotkeyRecorder
     }
 }
 
 #Preview {
     PreferencesView()
+}
+
+// MARK: - Hotkey recorder UI
+struct NovelHotkeyRecorder: View {
+    @ObservedObject var prefs = Preferences.shared
+    @State private var captureTarget: CaptureTarget? = nil
+    @State private var monitor: Any? = nil
+    @State private var prevStatus: String = ""
+    @State private var nextStatus: String = ""
+
+    enum CaptureTarget { case prev, next }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("翻页快捷键")
+                .font(.subheadline)
+            HStack {
+                Text("上一页：")
+                Text(displayCombo(code: prefs.novelPrevKeyCode == 0 ? 123 : prefs.novelPrevKeyCode,
+                                   mods: prefs.novelPrevModifiers))
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minWidth: 140, alignment: .leading)
+                Button(captureTarget == .prev ? "按下组合…" : "录制") { captureTarget = .prev }
+                Text(prevStatus).foregroundStyle(.secondary).font(.footnote)
+            }
+            HStack {
+                Text("下一页：")
+                Text(displayCombo(code: prefs.novelNextKeyCode == 0 ? 124 : prefs.novelNextKeyCode,
+                                   mods: prefs.novelNextModifiers))
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minWidth: 140, alignment: .leading)
+                Button(captureTarget == .next ? "按下组合…" : "录制") { captureTarget = .next }
+                Text(nextStatus).foregroundStyle(.secondary).font(.footnote)
+            }
+            Text("提示：某些系统快捷键可能占用组合，如注册失败，请更换组合。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: captureTarget) { _, newValue in
+            if newValue != nil { startCapture() } else { stopCapture() }
+        }
+    }
+
+    private func startCapture() {
+        stopCapture()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { ev in
+            guard let target = captureTarget else { return ev }
+            let mods = modifiers(from: ev.modifierFlags)
+            let code = UInt32(ev.keyCode)
+
+            // Save to prefs
+            switch target {
+            case .prev:
+                prefs.novelPrevKeyCode = code
+                prefs.novelPrevModifiers = mods.rawValue
+                prevStatus = testRegister(code: code, mods: mods) ? "已注册" : "冲突"
+            case .next:
+                prefs.novelNextKeyCode = code
+                prefs.novelNextModifiers = mods.rawValue
+                nextStatus = testRegister(code: code, mods: mods) ? "已注册" : "冲突"
+            }
+            captureTarget = nil
+            return nil // consume
+        }
+    }
+
+    private func stopCapture() {
+        if let m = monitor { NSEvent.removeMonitor(m) }
+        monitor = nil
+    }
+
+    private func modifiers(from flags: NSEvent.ModifierFlags) -> GlobalHotkeys.Modifiers {
+        var m = GlobalHotkeys.Modifiers(rawValue: 0)
+        if flags.contains(.option) { m.insert(.option) }
+        if flags.contains(.command) { m.insert(.command) }
+        if flags.contains(.control) { m.insert(.control) }
+        if flags.contains(.shift) { m.insert(.shift) }
+        // If none pressed, default to Option for convenience
+        if m.rawValue == 0 { m.insert(.option) }
+        return m
+    }
+
+    private func displayCombo(code: UInt32, mods: UInt32) -> String {
+        var s = ""
+        let m = GlobalHotkeys.Modifiers(rawValue: mods == 0 ? GlobalHotkeys.Modifiers.option.rawValue : mods)
+        if m.contains(.option) { s += "⌥" }
+        if m.contains(.command) { s += "⌘" }
+        if m.contains(.control) { s += "⌃" }
+        if m.contains(.shift) { s += "⇧" }
+        s += keyName(for: code)
+        return s
+    }
+
+    private func keyName(for code: UInt32) -> String {
+        switch code {
+        case 0: return "←"
+        case 123: return "←"
+        case 124: return "→"
+        case 125: return "↓"
+        case 126: return "↑"
+        case 49: return "Space"
+        case 53: return "Esc"
+        case 36: return "Return"
+        default: return "KeyCode \(code)"
+        }
+    }
+
+    private func testRegister(code: UInt32, mods: GlobalHotkeys.Modifiers) -> Bool {
+        let tester = GlobalHotkeys()
+        let ok = tester.registerRaw(keyCode: code, modifiers: mods, {})
+        tester.unregisterAll()
+        return ok
+    }
 }

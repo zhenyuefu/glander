@@ -7,6 +7,7 @@ enum StocksWidgetStyle: String {
     case single      // single symbol overview
 }
 
+@MainActor
 final class StocksWidgetController: NSViewController, WKNavigationDelegate, WKScriptMessageHandler {
     private var webView: WKWebView!
     var symbols: [String] = [] { didSet { reload() } }
@@ -66,12 +67,7 @@ final class StocksWidgetController: NSViewController, WKNavigationDelegate, WKSc
         applyRecommendedWindowSizing()
     }
 
-    deinit {
-        // Clean up message handler to avoid potential retain cycles
-        if isViewLoaded {
-            webView?.configuration.userContentController.removeScriptMessageHandler(forName: "stocksWidget")
-        }
-    }
+    // Note: Avoid referencing actor-isolated properties in deinit; cleanup is handled by WebKit.
 
     func reload() {
         guard isViewLoaded else { return }

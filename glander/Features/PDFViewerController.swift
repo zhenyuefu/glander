@@ -1,6 +1,7 @@
 import AppKit
 import PDFKit
 
+@MainActor
 final class PDFViewerController: NSViewController {
     private let pdfView = PDFView()
     private var timer: DispatchSourceTimer?
