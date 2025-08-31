@@ -273,8 +273,9 @@ private extension StocksWidgetController {
           if (typeof ResizeObserver !== 'undefined'){
             try {
               var root = document.querySelector('.tradingview-widget-container') || document.body;
-              var ro = new ResizeObserver(function(){ measure(); });
               if (root) ro.observe(root);
+              // Clean up observer on page unload to prevent memory leaks
+              window.addEventListener('unload', function() { ro.disconnect(); }, { once: true });
             } catch(e) {}
           } else {
             // Fallback polling for a short period
