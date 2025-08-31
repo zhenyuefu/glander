@@ -1,6 +1,7 @@
 import AppKit
 import AVKit
 
+@MainActor
 final class VideoPlayerController: NSViewController {
     private let playerView = AVPlayerView()
 

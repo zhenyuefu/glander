@@ -6,7 +6,7 @@ enum WebAdapter {
 }
 
 struct WebAdapters {
-    static func apply(_ adapter: WebAdapter, to controller: TransparentWebViewController) {
+    @MainActor static func apply(_ adapter: WebAdapter, to controller: TransparentWebViewController) {
         switch adapter {
         case .none:
             break

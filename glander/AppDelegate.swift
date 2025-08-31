@@ -3,6 +3,7 @@ import WebKit
 import Combine
 import UniformTypeIdentifiers
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: TransparentWindowController?
     private var webVC: TransparentWebViewController?
@@ -15,9 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingStocksApply: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private let bossKey = BossKeyManager()
+    private var globalHotkeys: GlobalHotkeys?
     private let prefs = Preferences.shared
     private var cancellables = Set<AnyCancellable>()
-    private var marquee: MenuBarMarquee?
+    private var novelReader: MenuBarNovelReader?
+    private var tocWC: NovelTOCWindowController?
     private var didBindPrefs = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -31,6 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         // 关闭应用级别的窗口/状态恢复，避免控制台 noisy 日志
         return false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Explicitly cleanup monitors and hotkeys
+        novelReader?.invalidate()
+        globalHotkeys?.unregisterAll()
+        bossKey.unregister()
     }
 
     private func setupWindow() {
@@ -59,6 +69,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "打开视频URL…", action: #selector(openVideoURLPrompt), keyEquivalent: "u")
         menu.addItem(withTitle: "打开本地视频…", action: #selector(openLocalVideoPrompt), keyEquivalent: "v")
         menu.addItem(NSMenuItem.separator())
+        // Novel (TXT) controls in menu bar
+        menu.addItem(withTitle: "小说 • 打开TXT…", action: #selector(openNovelTXT), keyEquivalent: "t")
+        let prevItem = NSMenuItem(title: "小说 • 上一页 (⌥←)", action: #selector(novelPrev), keyEquivalent: "")
+        let nextItem = NSMenuItem(title: "小说 • 下一页 (⌥→)", action: #selector(novelNext), keyEquivalent: "")
+        menu.addItem(prevItem)
+        menu.addItem(nextItem)
+        // TOC submenu placeholder (will be built on demand)
+        let tocItem = NSMenuItem(title: "小说 • 目录", action: nil, keyEquivalent: "")
+        tocItem.submenu = NSMenu(title: "目录")
+        menu.addItem(tocItem)
+        menu.addItem(withTitle: "小说 • 目录窗口…", action: #selector(openNovelTOCWindow), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "清除网站数据…", action: #selector(clearWebsiteData), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "重置窗口外观", action: #selector(resetWindowAppearance), keyEquivalent: "")
@@ -69,9 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
         statusItem = item
 
-        // Setup marquee if enabled
-        marquee = MenuBarMarquee(statusItem: statusItem)
-        applyMarqueeFromPrefs()
+        // Setup novel reader
+        novelReader = MenuBarNovelReader(statusItem: statusItem)
+        // Ensure preferences bindings are active for hotkey changes
+        if !didBindPrefs {
+            bindPreferences()
+            didBindPrefs = true
+        }
+        // Register global hotkeys from preferences
+        registerNovelHotkeysFromPrefs()
+        updateNovelMenuShortcutTitles()
+        // Restore last reading if possible
+        novelReader?.restoreLastReadingIfAvailable()
+        rebuildTOCSubmenu()
     }
 
     private func setupBossKey() {
@@ -138,16 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // Marquee bindings
-        prefs.$marqueeEnabled
-            .sink { [weak self] _ in self?.applyMarqueeFromPrefs() }
-            .store(in: &cancellables)
-        prefs.$marqueeText
-            .sink { [weak self] _ in self?.applyMarqueeFromPrefs() }
-            .store(in: &cancellables)
-        prefs.$marqueeSpeed
-            .sink { [weak self] _ in self?.applyMarqueeFromPrefs() }
-            .store(in: &cancellables)
+        // Marquee removed; no bindings needed
 
         // Web preferences
         prefs.$forceTransparentCSS
@@ -189,6 +212,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prefs.$aiMinFrames
             .sink { [weak self] n in self?.camera?.minConsecutiveDetections = n }
             .store(in: &cancellables)
+
+        // Novel hotkey changes → re-register
+        [
+            prefs.$novelPrevKeyCode.map { _ in () }.eraseToAnyPublisher(),
+            prefs.$novelPrevModifiers.map { _ in () }.eraseToAnyPublisher(),
+            prefs.$novelNextKeyCode.map { _ in () }.eraseToAnyPublisher(),
+            prefs.$novelNextModifiers.map { _ in () }.eraseToAnyPublisher(),
+        ].forEach { pub in
+            pub
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.registerNovelHotkeysFromPrefs() }
+                .store(in: &cancellables)
+        }
     }
 
     private func applyPreferencesToWindow() {
@@ -198,15 +234,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.level = prefs.alwaysOnTop ? .floating : .normal
     }
 
-    private func applyMarqueeFromPrefs() {
-        guard let marquee, let statusItem else { return }
-        if prefs.marqueeEnabled {
-            marquee.configure(text: prefs.marqueeText, charsPerSecond: prefs.marqueeSpeed)
-            marquee.start()
+    // Marquee removed
+
+    // MARK: - Novel (TXT) actions
+    @objc private func openNovelTXT() {
+        let panel = NSOpenPanel()
+        // Use UTType-based filters to avoid deprecation warnings
+        panel.allowedContentTypes = [
+            UTType.plainText
+        ].compactMap { $0 }
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            novelReader?.loadTXT(from: url)
+            rebuildTOCSubmenu()
+        }
+    }
+
+    @objc private func novelPrev() { novelReader?.pagePrev() }
+    @objc private func novelNext() { novelReader?.pageNext() }
+
+    @objc private func tocJump(_ sender: NSMenuItem) {
+        if let offset = sender.representedObject as? Int { novelReader?.jumpTo(offset: offset) }
+    }
+
+    @objc private func openNovelTOCWindow() {
+        guard let reader = novelReader else { return }
+        if let wc = tocWC {
+            wc.updateChapters(reader.toc)
+            wc.showWindow(self)
+            NSApp.activate(ignoringOtherApps: true)
         } else {
-            marquee.stop(resetTitle: "GL")
-            // ensure button shows base title
-            statusItem.button?.title = "GL"
+            let wc = NovelTOCWindowController(chapters: reader.toc) { [weak self] offset in
+                self?.novelReader?.jumpTo(offset: offset)
+            }
+            tocWC = wc
+            wc.showWindow(self)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func rebuildTOCSubmenu() {
+        guard let menu = statusItem?.menu else { return }
+        // Find the TOC item by title inserted above
+        if let tocItem = menu.items.first(where: { $0.title.hasPrefix("小说 • 目录") }) {
+            tocItem.submenu = novelReader?.buildTOCMenu(target: self, action: #selector(tocJump(_:)))
+        }
+    }
+
+    private func registerNovelHotkeysFromPrefs() {
+        func mods(option: Bool, command: Bool, control: Bool, shift: Bool) -> GlobalHotkeys.Modifiers {
+            var m = GlobalHotkeys.Modifiers(rawValue: 0)
+            if option { m.insert(.option) }
+            if command { m.insert(.command) }
+            if control { m.insert(.control) }
+            if shift { m.insert(.shift) }
+            return m
+        }
+        if globalHotkeys == nil { globalHotkeys = GlobalHotkeys() }
+        globalHotkeys?.unregisterAll()
+        guard let gh = globalHotkeys else { return }
+        // Resolve stored fields, fallback to Option+Arrow
+        let defaultPrevCode: UInt32 = 123, defaultNextCode: UInt32 = 124
+        let defaultMods = GlobalHotkeys.Modifiers.option
+        let prevCode = prefs.novelPrevKeyCode == 0 ? defaultPrevCode : prefs.novelPrevKeyCode
+        let nextCode = prefs.novelNextKeyCode == 0 ? defaultNextCode : prefs.novelNextKeyCode
+        var prevMods = GlobalHotkeys.Modifiers(rawValue: prefs.novelPrevModifiers)
+        if prevMods.rawValue == 0 { prevMods = defaultMods }
+        var nextMods = GlobalHotkeys.Modifiers(rawValue: prefs.novelNextModifiers)
+        if nextMods.rawValue == 0 { nextMods = defaultMods }
+
+        var failed: [String] = []
+        if !gh.registerRaw(keyCode: prevCode, modifiers: prevMods, { [weak self] in self?.novelReader?.pagePrev() }) {
+            failed.append("上一页 (\(describeCombo(mods: prevMods, code: prevCode)))")
+        }
+        if !gh.registerRaw(keyCode: nextCode, modifiers: nextMods, { [weak self] in self?.novelReader?.pageNext() }) {
+            failed.append("下一页 (\(describeCombo(mods: nextMods, code: nextCode)))")
+        }
+        if !failed.isEmpty {
+            let message = "以下快捷键注册失败，可能与系统或其他应用冲突：\n\n" + failed.joined(separator: "、") + "\n\n请在偏好设置中更换修饰键。"
+            showAlert(title: "快捷键冲突", message: message)
+        }
+        updateNovelMenuShortcutTitles()
+    }
+
+    private func updateNovelMenuShortcutTitles() {
+        guard let menu = statusItem?.menu else { return }
+        let defaultPrevCode: UInt32 = 123, defaultNextCode: UInt32 = 124
+        let defaultMods = GlobalHotkeys.Modifiers.option
+        let prevCode = prefs.novelPrevKeyCode == 0 ? defaultPrevCode : prefs.novelPrevKeyCode
+        let nextCode = prefs.novelNextKeyCode == 0 ? defaultNextCode : prefs.novelNextKeyCode
+        var prevMods = GlobalHotkeys.Modifiers(rawValue: prefs.novelPrevModifiers)
+        if prevMods.rawValue == 0 { prevMods = defaultMods }
+        var nextMods = GlobalHotkeys.Modifiers(rawValue: prefs.novelNextModifiers)
+        if nextMods.rawValue == 0 { nextMods = defaultMods }
+        let prevSym = describeCombo(mods: prevMods, code: prevCode)
+        let nextSym = describeCombo(mods: nextMods, code: nextCode)
+        for item in menu.items {
+            if item.title.hasPrefix("小说 • 上一页") {
+                item.title = "小说 • 上一页 (\(prevSym))"
+            } else if item.title.hasPrefix("小说 • 下一页") {
+                item.title = "小说 • 下一页 (\(nextSym))"
+            }
+        }
+    }
+
+    private func describeCombo(mods: GlobalHotkeys.Modifiers, code: UInt32) -> String {
+        var s = ""
+        if mods.contains(.option) { s += "⌥" }
+        if mods.contains(.command) { s += "⌘" }
+        if mods.contains(.control) { s += "⌃" }
+        if mods.contains(.shift) { s += "⇧" }
+        s += keyName(for: code)
+        return s
+    }
+
+    private func keyName(for code: UInt32) -> String {
+        switch code {
+        case 123: return "←"
+        case 124: return "→"
+        case 125: return "↓"
+        case 126: return "↑"
+        case 49: return "Space"
+        case 53: return "Esc"
+        case 36: return "Return"
+        default: return "KeyCode \(code)"
         }
     }
 
@@ -470,7 +623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let since = Date(timeIntervalSince1970: 0)
-        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: since) { [weak self] in
+        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: since) {
             DispatchQueue.main.async {
                 let done = NSAlert()
                 done.alertStyle = .informational

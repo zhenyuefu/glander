@@ -1,5 +1,6 @@
 import WebKit
 
+@MainActor
 enum WebKitConfig {
     static let sharedPool = WKProcessPool()
 
@@ -14,4 +15,3 @@ enum WebKitConfig {
         return cfg
     }
 }
-

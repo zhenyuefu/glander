@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 
+@MainActor
 final class TransparentWebViewController: NSViewController, WKNavigationDelegate {
     private var webView: WKWebView!
     // Controls injecting CSS to force transparent page background; off by default.
