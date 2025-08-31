@@ -39,13 +39,23 @@ jobs:
           scheme: ${{ 'default' }}
         run: |
           if [ $scheme = default ]; then scheme=$(cat default); fi
-          xcodebuild clean build -configuration Release -scheme "$scheme" -${{ steps.xcode_container.outputs.filetype_parameter }} "${{ steps.xcode_container.outputs.file_to_build }}" | xcpretty && exit ${PIPESTATUS[0]}
+          xcodebuild clean build \
+            -configuration Release \
+            -scheme "$scheme" \
+            -${{ steps.xcode_container.outputs.filetype_parameter }} "${{ steps.xcode_container.outputs.file_to_build }}" \
+            -derivedDataPath build \
+            | xcpretty && exit ${PIPESTATUS[0]}
       - name: Locate .app product
         id: app
         shell: bash
         run: |
           set -euo pipefail
-          APP_PATH=$(find "$(pwd)" -name "*.app" -type d -print -quit)
+          # Prefer products from the explicit DerivedData path
+          APP_PATH=$(find "$(pwd)/build/Build/Products" -name "*.app" -type d -print -quit || true)
+          # Fallback to searching repo tree if not found (e.g., structure change)
+          if [ -z "${APP_PATH}" ]; then
+            APP_PATH=$(find "$(pwd)" -name "*.app" -type d -print -quit || true)
+          fi
           if [ -z "$APP_PATH" ]; then
             echo "No .app found" >&2
             exit 1
