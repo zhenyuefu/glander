@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var camera: CameraMonitor?
     private var aiCoolingDown = false
     private var aiCooldownWork: DispatchWorkItem?
+    private var pendingStocksApply: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private let bossKey = BossKeyManager()
     private let prefs = Preferences.shared
@@ -210,8 +211,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyStocksPrefs() {
+        // Coalesce rapid updates from multiple preference publishers (symbols/theme/style)
+        pendingStocksApply?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.applyStocksPrefsNow()
+        }
+        pendingStocksApply = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: work)
+    }
+
+    private func applyStocksPrefsNow() {
         guard let vc = stocksVC else { return }
         let syms = prefs.stocksSymbols.split(separator: ",").map { String($0) }
+        // Apply symbols/theme first, then style last to ensure a single final reload
         vc.symbols = syms
         vc.darkTheme = prefs.stocksDarkTheme
         if let style = StocksWidgetStyle(rawValue: prefs.stocksWidgetStyle) {
