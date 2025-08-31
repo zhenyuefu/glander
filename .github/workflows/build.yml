@@ -40,21 +40,6 @@ jobs:
         run: |
           if [ $scheme = default ]; then scheme=$(cat default); fi
           xcodebuild clean build -configuration Release -scheme "$scheme" -${{ steps.xcode_container.outputs.filetype_parameter }} "${{ steps.xcode_container.outputs.file_to_build }}" | xcpretty && exit ${PIPESTATUS[0]}
-      - name: Import Signing Certificate
-        if: ${{ secrets.MACOS_CERT_IDENTITY != '' }}
-        shell: bash
-        env:
-          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
-        run: |
-          set -euo pipefail
-          echo "$CERT_P12_BASE64" | base64 --decode > signing_cert.p12
-          security create-keychain -p "" build.keychain
-          security set-keychain-settings -lut 21600 build.keychain
-          security unlock-keychain -p "" build.keychain
-          security import signing_cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -A
-          security list-keychains -d user -s build.keychain $(security list-keychains -d user | sed 's/[\" ]//g')
-          security find-identity -v -p codesigning build.keychain
       - name: Locate .app product
         id: app
         shell: bash
@@ -81,20 +66,7 @@ jobs:
           echo "build=$BUILD_VER" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Resolved: name=$APP_NAME short=$SHORT_VER build=$BUILD_VER tag=$TAG"
-      - name: Code Sign App (Developer ID)
-        if: ${{ secrets.MACOS_CERT_IDENTITY != '' }}
-        shell: bash
-        env:
-          SIGN_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
-        run: |
-          set -euo pipefail
-          APP_PATH="${{ steps.app.outputs.path }}"
-          xattr -rc "$APP_PATH" || true
-          /usr/bin/codesign --force --deep --options runtime --timestamp -s "$SIGN_IDENTITY" "$APP_PATH"
-          /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-      - name: Code Sign App (ad-hoc fallback)
-        if: ${{ secrets.MACOS_CERT_IDENTITY == '' }}
+      - name: Code Sign App (ad-hoc)
         shell: bash
         run: |
           set -euo pipefail
@@ -113,35 +85,7 @@ jobs:
           DMG_PATH="dist/${APP_NAME}.dmg"
           hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH"
           echo "path=$(pwd)/$DMG_PATH" >> $GITHUB_OUTPUT
-      - name: Notarize DMG
-        if: ${{ secrets.APPLE_KEY_ID != '' }}
-        id: notarize
-        shell: bash
-        env:
-          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
-          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-          echo "$APPLE_API_KEY_BASE64" | base64 --decode > AuthKey.p8
-          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
-            --key AuthKey.p8 \
-            --key-id "$APPLE_KEY_ID" \
-            --issuer "$APPLE_ISSUER_ID" \
-            --wait --timeout 20m
-      - name: Staple Notarization Ticket
-        if: ${{ secrets.APPLE_KEY_ID != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
-          xcrun stapler validate "${{ steps.dmg.outputs.path }}"
-      - name: Gatekeeper assess DMG
-        shell: bash
-        run: |
-          spctl --assess --type open --verbose "${{ steps.dmg.outputs.path }}" || true
       - name: Compose Release Notes (no-notarize)
-        if: ${{ secrets.APPLE_KEY_ID == '' }}
         shell: bash
         run: |
           APP_NAME='${{ steps.meta.outputs.name }}'
@@ -170,25 +114,7 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           git tag -f "$TAG"
           git push -f origin "$TAG"
-      - name: Publish GitHub Release (notarized)
-        if: ${{ secrets.APPLE_KEY_ID != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.name }} ${{ steps.meta.outputs.tag }}
-          body: |
-            Automated release from CI.
-            - Commit: ${{ github.sha }}
-            - Branch: ${{ github.ref_name }}
-            - App: ${{ steps.meta.outputs.name }}
-            - Version: ${{ steps.meta.outputs.short }} (build ${{ steps.meta.outputs.build }})
-          files: |
-            ${{ steps.dmg.outputs.path }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Publish GitHub Release (no-notarize)
-        if: ${{ secrets.APPLE_KEY_ID == '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
